@@ -60,12 +60,8 @@
       transition: opacity 1s;
     }
 
-    /* ── Splash element ── */
-    .splash {
-      position: absolute;
-      pointer-events: none;
-      transform-origin: bottom center;
-    }
+    /* mobile tap highlight off */
+    canvas { -webkit-tap-highlight-color: transparent; touch-action: none; }
   </style>
 </head>
 <body>
@@ -199,27 +195,33 @@ function drawSea(phase, p, now) {
   ctx.fillStyle = grad;
   ctx.fillRect(0, HORIZON, W, H - HORIZON);
 
-  // Animated surface waves
-  waveOffset = now / 1800;
-  ctx.save();
-  ctx.globalAlpha = 0.18;
-  for (let layer = 0; layer < 3; layer++) {
-    const speed = 1 + layer * 0.4;
-    const amp   = 6 - layer * 1.5;
-    const freq  = 0.012 + layer * 0.004;
-    const yBase = HORIZON + 1 + layer * 18;
+  // Animated surface waves — 5 layers, large amplitude
+  waveOffset = now / 1400;
+  const waveLayers = [
+    { speed: 0.55, amp: 26, freq: 0.007, yOff:  0, alpha: 0.13 },
+    { speed: 0.90, amp: 18, freq: 0.011, yOff: 22, alpha: 0.16 },
+    { speed: 1.30, amp: 13, freq: 0.015, yOff: 46, alpha: 0.18 },
+    { speed: 1.70, amp:  9, freq: 0.020, yOff: 72, alpha: 0.20 },
+    { speed: 2.10, amp:  6, freq: 0.026, yOff:102, alpha: 0.22 },
+  ];
 
+  ctx.save();
+  for (const lyr of waveLayers) {
+    const yBase = HORIZON + lyr.yOff;
+    ctx.globalAlpha = lyr.alpha;
     ctx.beginPath();
     ctx.moveTo(0, yBase);
-    for (let x = 0; x <= W; x += 4) {
-      const y = yBase + Math.sin(x * freq + waveOffset * speed) * amp
-                      + Math.sin(x * freq * 1.7 + waveOffset * speed * 0.6) * amp * 0.5;
+    for (let x = 0; x <= W; x += 3) {
+      const y = yBase
+        + Math.sin(x * lyr.freq + waveOffset * lyr.speed) * lyr.amp
+        + Math.sin(x * lyr.freq * 1.6 + waveOffset * lyr.speed * 0.7) * lyr.amp * 0.55
+        + Math.sin(x * lyr.freq * 2.3 + waveOffset * lyr.speed * 1.3) * lyr.amp * 0.25;
       ctx.lineTo(x, y);
     }
     ctx.lineTo(W, H);
     ctx.lineTo(0, H);
     ctx.closePath();
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
     ctx.fill();
   }
   ctx.restore();
@@ -244,89 +246,100 @@ function drawSea(phase, p, now) {
   ctx.restore();
 }
 
-// ── Draw horizon glow ──────────────────────────────────
-function drawHorizonGlow(phase, p) {
+// ── Draw horizon glow — follows celestial body's x ─────
+function drawHorizonGlow(phase, p, t) {
+  const { x: cx } = celestialPos(t);
+  const glowX = Math.max(0, Math.min(W, cx));     // clamp to screen
+
   const alpha = phase === 'day'
-    ? (p < 0.5 ? lerp(0.6, 0.15, p / 0.5) : lerp(0.15, 0.6, (p - 0.5) / 0.5))
-    : (p < 0.5 ? lerp(0.6, 0.05, p / 0.5) : lerp(0.05, 0.6, (p - 0.5) / 0.5));
+    ? (p < 0.5 ? lerp(0.55, 0.12, p / 0.5) : lerp(0.12, 0.55, (p - 0.5) / 0.5))
+    : (p < 0.5 ? lerp(0.50, 0.04, p / 0.5) : lerp(0.04, 0.50, (p - 0.5) / 0.5));
 
   const glowColor = phase === 'day' ? '255,160,80' : '200,100,50';
-  const glow = ctx.createRadialGradient(W/2, HORIZON, 0, W/2, HORIZON, W * 0.5);
+  const glow = ctx.createRadialGradient(glowX, HORIZON, 0, glowX, HORIZON, W * 0.55);
   glow.addColorStop(0,   `rgba(${glowColor},${alpha})`);
-  glow.addColorStop(0.4, `rgba(${glowColor},${alpha * 0.3})`);
+  glow.addColorStop(0.4, `rgba(${glowColor},${alpha * 0.25})`);
   glow.addColorStop(1,   'rgba(0,0,0,0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
 }
 
-// ── Draw sun ───────────────────────────────────────────
-function celestialY(t) {
-  // arc: rises from below horizon, peaks near top, sets again
-  const norm = t / HALF; // 0→1
-  return HORIZON - Math.sin(norm * Math.PI) * (HORIZON * 0.78);
+// ── Celestial arc: left horizon → top center → right horizon ───
+function celestialPos(t) {
+  const norm    = t / HALF;                        // 0 → 1
+  const submerge = 55;                             // px below horizon at rise/set
+  const peakY    = H * 0.07;                       // highest point (near top)
+  const arcH     = (HORIZON + submerge) - peakY;
+  const x = lerp(-60, W + 60, norm);
+  const y = (HORIZON + submerge) - Math.sin(norm * Math.PI) * arcH;
+  return { x, y };
 }
 
-function drawSun(t, p) {
-  const y = celestialY(t);
-  const alpha = p < 0.5 ? lerp(0, 1, p / 0.5) : lerp(1, 0, (p - 0.5) / 0.5);
-  if (alpha <= 0) return;
+// horizon-alpha: fade in/out as body crosses horizon line
+function horizonAlpha(y, r) {
+  const depth = y - HORIZON;                       // >0 = below, <0 = above
+  return Math.max(0, Math.min(1, (-depth + r) / (r * 2)));
+}
 
-  const x = W / 2;
+function drawSun(t) {
+  const { x, y } = celestialPos(t);
   const r = 36;
+  const alpha = horizonAlpha(y, r);
+  if (alpha <= 0.01) return;
+
+  // Low-sun warmth factor (0=horizon, 1=zenith)
+  const warmth = Math.max(0, 1 - Math.max(0, y) / HORIZON);
+
+  ctx.save();
+  // Clip to sky so sun rises cleanly from horizon
+  ctx.beginPath(); ctx.rect(0, 0, W, HORIZON + 2); ctx.clip();
 
   // Corona
-  const corona = ctx.createRadialGradient(x, y, r * 0.8, x, y, r * 4);
-  corona.addColorStop(0,   `rgba(255,220,100,${alpha * 0.4})`);
-  corona.addColorStop(1,   'rgba(255,180,50,0)');
+  const corona = ctx.createRadialGradient(x, y, r * 0.9, x, y, r * 5);
+  corona.addColorStop(0,   `rgba(255,${Math.round(200 + warmth*55)},${Math.round(warmth*100)},${alpha * 0.35})`);
+  corona.addColorStop(1,   'rgba(255,160,0,0)');
   ctx.fillStyle = corona;
-  ctx.beginPath();
-  ctx.arc(x, y, r * 4, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r * 5, 0, Math.PI * 2); ctx.fill();
 
-  // Sun disk
+  // Disk
   const sunGrad = ctx.createRadialGradient(x - r*0.2, y - r*0.2, 0, x, y, r);
   sunGrad.addColorStop(0, `rgba(255,255,220,${alpha})`);
-  sunGrad.addColorStop(1, `rgba(255,200, 60,${alpha})`);
+  sunGrad.addColorStop(1, `rgba(255,${Math.round(180 - warmth*30)},${Math.round(warmth*20)},${alpha})`);
   ctx.fillStyle = sunGrad;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+
+  ctx.restore();
 }
 
 // ── Draw moon ──────────────────────────────────────────
-function drawMoon(t, p) {
-  const y = celestialY(t);
-  const alpha = p < 0.5 ? lerp(0, 1, p / 0.5) : lerp(1, 0, (p - 0.5) / 0.5);
-  if (alpha <= 0) return;
-
-  const x = W / 2 + 40;
+function drawMoon(t) {
+  const { x, y } = celestialPos(t);
   const r = 28;
+  const alpha = horizonAlpha(y, r);
+  if (alpha <= 0.01) return;
 
-  // Moon glow
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, W, HORIZON + 2); ctx.clip();
+
+  // Glow
   const glow = ctx.createRadialGradient(x, y, r, x, y, r * 3.5);
-  glow.addColorStop(0,   `rgba(200,215,255,${alpha * 0.25})`);
+  glow.addColorStop(0,   `rgba(200,215,255,${alpha * 0.22})`);
   glow.addColorStop(1,   'rgba(100,120,200,0)');
   ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(x, y, r * 3.5, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill();
 
-  // Moon disk
-  ctx.save();
+  // Disk
   ctx.globalAlpha = alpha;
   const moonGrad = ctx.createRadialGradient(x - r*0.25, y - r*0.25, 0, x, y, r);
   moonGrad.addColorStop(0, '#f5f0e8');
   moonGrad.addColorStop(1, '#c8cfe8');
   ctx.fillStyle = moonGrad;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
 
   // Crescent shadow
-  ctx.fillStyle = 'rgba(30,35,80,0.45)';
-  ctx.beginPath();
-  ctx.arc(x + r * 0.35, y, r * 0.88, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.fillStyle = 'rgba(30,35,80,0.42)';
+  ctx.beginPath(); ctx.arc(x + r * 0.38, y, r * 0.86, 0, Math.PI * 2); ctx.fill();
+
   ctx.restore();
 }
 
@@ -518,25 +531,25 @@ function updateLabel(phase, p) {
   timeLabel.textContent = label;
 }
 
-// ── Click interaction ──────────────────────────────────
-canvas.addEventListener('click', e => {
-  const x = e.clientX;
-  const y = e.clientY;
-
+// ── Click / touch interaction ──────────────────────────
+function handleInteraction(x, y) {
   if (y < HORIZON - 10) {
-    // Sky click – star only at night
     const { phase } = phaseT(performance.now());
-    if (phase === 'night') {
-      addStar(x, y);
-    } else {
-      // day: small light burst
-      addDayBurst(x, y);
-    }
+    if (phase === 'night') addStar(x, y);
+    else addDayBurst(x, y);
   } else {
-    // Sea click – ripple
     addRipple(x, y);
   }
-});
+}
+
+canvas.addEventListener('click', e => handleInteraction(e.clientX, e.clientY));
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  initAudio();
+  const t = e.changedTouches[0];
+  handleInteraction(t.clientX, t.clientY);
+}, { passive: false });
 
 // ── Day burst (light sparkle when clicking sky in day) ──
 const bursts = [];
@@ -719,11 +732,11 @@ function render(now) {
   const p = phaseProgress(t);
 
   drawSky(phase, p);
-  drawHorizonGlow(phase, p);
+  drawHorizonGlow(phase, p, t);
   drawBgStars(phase, p, now);
 
-  if (phase === 'day')   drawSun(t, p);
-  else                   drawMoon(t, p);
+  if (phase === 'day')   drawSun(t);
+  else                   drawMoon(t);
 
   drawSea(phase, p, now);
 
