@@ -1,0 +1,32 @@
+{
+  "name": "beautify-claude-code",
+  "version": "1.0.0",
+  "description": "MCP server that gives Claude Code access to beautiful royalty-free images — no more emoji suns and placeholder boxes.",
+  "main": "index.js",
+  "bin": {
+    "beautify-claude-code": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "claude-code",
+    "anthropic",
+    "images",
+    "unsplash",
+    "pexels",
+    "ai-tools",
+    "developer-tools"
+  ],
+  "author": "YellowElonMusk",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
